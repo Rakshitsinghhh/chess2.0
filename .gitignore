@@ -1,0 +1,23 @@
+# Ignore virtual environment
+.venv/
+
+# Ignore data folder (all files)
+data/*
+!data/.gitkeep
+
+# Ignore PyTorch model files everywhere
+*.pt
+
+# Ignore large model shards inside outputs/models
+outputs/models/*
+
+# (Optional) keep folder structure
+!outputs/models/.gitkeep
+
+# Ignore logs if needed
+outputs/logs/*
+!outputs/logs/.gitkeep
+
+# Ignore Python cache
+__pycache__/
+*.pyc
