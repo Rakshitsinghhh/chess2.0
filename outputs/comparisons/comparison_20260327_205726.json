@@ -1,0 +1,304 @@
+[
+  {
+    "name": "Starting position \u2014 White",
+    "category": "Opening",
+    "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+    "model_move": "e2e4",
+    "model_score": 0.7044024467468262,
+    "model_top5": [
+      "e2e4",
+      "d2d4",
+      "e2e3"
+    ],
+    "stockfish_move": "e2e4",
+    "stockfish_score": "35cp",
+    "match_exact": true,
+    "match_top3": true,
+    "top3_overlap": true
+  },
+  {
+    "name": "After 1.e4 \u2014 Black response",
+    "category": "Opening",
+    "fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1",
+    "model_move": "d7d5",
+    "model_score": -0.6973074674606323,
+    "model_top5": [
+      "d7d5",
+      "e7e5",
+      "g8f6"
+    ],
+    "stockfish_move": "c7c5",
+    "stockfish_score": "-28cp",
+    "match_exact": false,
+    "match_top3": false,
+    "top3_overlap": true
+  },
+  {
+    "name": "Italian Game \u2014 White develops",
+    "category": "Opening",
+    "fen": "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 2 3",
+    "model_move": "c4f7",
+    "model_score": 0.7228971719741821,
+    "model_top5": [
+      "c4f7",
+      "f3g5",
+      "f3e5"
+    ],
+    "stockfish_move": "d2d4",
+    "stockfish_score": "102cp",
+    "match_exact": false,
+    "match_top3": false,
+    "top3_overlap": false
+  },
+  {
+    "name": "Sicilian Defense",
+    "category": "Opening",
+    "fen": "rnbqkb1r/pp1ppppp/5n2/2p5/2PP4/2N5/PP2PPPP/R1BQKBNR w KQkq - 0 4",
+    "model_move": "d4c5",
+    "model_score": 0.7165515422821045,
+    "model_top5": [
+      "d4c5",
+      "d4d5",
+      "e2e3"
+    ],
+    "stockfish_move": "d4d5",
+    "stockfish_score": "108cp",
+    "match_exact": false,
+    "match_top3": true,
+    "top3_overlap": true
+  },
+  {
+    "name": "Scholar's mate Qxf7#",
+    "category": "Tactic",
+    "fen": "r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4",
+    "model_move": "h5f7",
+    "model_score": 0.7224410176277161,
+    "model_top5": [
+      "h5f7",
+      "c4f7",
+      "h5e5"
+    ],
+    "stockfish_move": "h5f7",
+    "stockfish_score": "mate in 1",
+    "match_exact": true,
+    "match_top3": true,
+    "top3_overlap": true
+  },
+  {
+    "name": "Knight fork on d5",
+    "category": "Tactic",
+    "fen": "r1bqkb1r/pppp1ppp/2n2n2/4p3/4P3/2N2N2/PPPP1PPP/R1BQKB1R w KQkq - 0 1",
+    "model_move": "d2d4",
+    "model_score": 0.7057372331619263,
+    "model_top5": [
+      "d2d4",
+      "f1b5",
+      "c3d5"
+    ],
+    "stockfish_move": "f1b5",
+    "stockfish_score": "22cp",
+    "match_exact": false,
+    "match_top3": false,
+    "top3_overlap": true
+  },
+  {
+    "name": "Bishop sacrifice Bxf7+",
+    "category": "Tactic",
+    "fen": "r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2N2N2/PPPP1PPP/R1BQK2R w KQkq - 0 1",
+    "model_move": "c3d5",
+    "model_score": 0.7194596529006958,
+    "model_top5": [
+      "c3d5",
+      "d2d4",
+      "f3e5"
+    ],
+    "stockfish_move": "d2d3",
+    "stockfish_score": "13cp",
+    "match_exact": false,
+    "match_top3": false,
+    "top3_overlap": false
+  },
+  {
+    "name": "Discovered check with Ng5",
+    "category": "Tactic",
+    "fen": "r1bqkbnr/ppp2ppp/2np4/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 1",
+    "model_move": "c4f7",
+    "model_score": 0.7350780963897705,
+    "model_top5": [
+      "c4f7",
+      "c4d5",
+      "f3g5"
+    ],
+    "stockfish_move": "c2c3",
+    "stockfish_score": "60cp",
+    "match_exact": false,
+    "match_top3": false,
+    "top3_overlap": false
+  },
+  {
+    "name": "Queen fork",
+    "category": "Tactic",
+    "fen": "r2qkb1r/ppp2ppp/2np1n2/4p3/2B1P3/2NP1N2/PPP2PPP/R1BQK2R w KQkq - 0 1",
+    "model_move": "c4f7",
+    "model_score": 0.7317571640014648,
+    "model_top5": [
+      "c4f7",
+      "f3g5",
+      "c3d5"
+    ],
+    "stockfish_move": "f3g5",
+    "stockfish_score": "656cp",
+    "match_exact": false,
+    "match_top3": false,
+    "top3_overlap": true
+  },
+  {
+    "name": "Pawn promotion a8=Q",
+    "category": "Endgame",
+    "fen": "8/P7/8/8/8/8/8/4K1k1 w - - 0 1",
+    "model_move": "e1e2",
+    "model_score": 0.7450442314147949,
+    "model_top5": [
+      "e1e2",
+      "e1d2",
+      "a7a8q"
+    ],
+    "stockfish_move": "a7a8q",
+    "stockfish_score": "mate in 5",
+    "match_exact": false,
+    "match_top3": true,
+    "top3_overlap": true
+  },
+  {
+    "name": "K+R vs K \u2014 rook checkmate",
+    "category": "Endgame",
+    "fen": "8/8/8/8/8/3k4/8/3RK3 w - - 0 1",
+    "model_move": "d1d3",
+    "model_score": 0.7429346442222595,
+    "model_top5": [
+      "d1d3",
+      "e1f2",
+      "d1d2"
+    ],
+    "stockfish_move": "d1c1",
+    "stockfish_score": "495cp",
+    "match_exact": false,
+    "match_top3": false,
+    "top3_overlap": true
+  },
+  {
+    "name": "K+Q vs K \u2014 avoid stalemate",
+    "category": "Endgame",
+    "fen": "7k/8/6QK/8/8/8/8/8 w - - 0 1",
+    "model_move": "g6g7",
+    "model_score": 0.7286559343338013,
+    "model_top5": [
+      "g6g7",
+      "g6e8",
+      "g6h7"
+    ],
+    "stockfish_move": "g6g7",
+    "stockfish_score": "mate in 1",
+    "match_exact": true,
+    "match_top3": true,
+    "top3_overlap": true
+  },
+  {
+    "name": "K+P vs K \u2014 pawn endgame",
+    "category": "Endgame",
+    "fen": "8/8/8/8/8/3k4/3p4/3K4 b - - 0 1",
+    "model_move": "d3c3",
+    "model_score": -0.7128943204879761,
+    "model_top5": [
+      "d3c3",
+      "d3e3",
+      "d3e4"
+    ],
+    "stockfish_move": "d3e3",
+    "stockfish_score": "3449cp",
+    "match_exact": false,
+    "match_top3": true,
+    "top3_overlap": true
+  },
+  {
+    "name": "King opposition",
+    "category": "Endgame",
+    "fen": "8/8/8/3k4/8/3K4/8/8 w - - 0 1",
+    "model_move": null,
+    "model_score": 0.0,
+    "model_top5": [],
+    "stockfish_move": "d3e3",
+    "stockfish_score": "0cp",
+    "match_exact": false,
+    "match_top3": false,
+    "top3_overlap": false
+  },
+  {
+    "name": "Back rank mate threat",
+    "category": "Mating Pattern",
+    "fen": "6k1/5ppp/8/8/8/8/8/R5K1 b - - 0 1",
+    "model_move": "g7g6",
+    "model_score": -0.7036749720573425,
+    "model_top5": [
+      "g7g6",
+      "h7h6",
+      "g7g5"
+    ],
+    "stockfish_move": "g7g5",
+    "stockfish_score": "-385cp",
+    "match_exact": false,
+    "match_top3": true,
+    "top3_overlap": true
+  },
+  {
+    "name": "Smothered mate setup",
+    "category": "Mating Pattern",
+    "fen": "7k/6pp/8/8/8/8/8/Q5K1 w - - 0 1",
+    "model_move": "a1a8",
+    "model_score": 0.7193187475204468,
+    "model_top5": [
+      "a1a8",
+      "a1g7",
+      "a1e5"
+    ],
+    "stockfish_move": "a1a8",
+    "stockfish_score": "mate in 1",
+    "match_exact": true,
+    "match_top3": true,
+    "top3_overlap": true
+  },
+  {
+    "name": "Two rooks mate",
+    "category": "Mating Pattern",
+    "fen": "k7/8/1KR5/2R5/8/8/8/8 w - - 0 1",
+    "model_move": "c6c8",
+    "model_score": 0.7356135845184326,
+    "model_top5": [
+      "c6c8",
+      "c5a5",
+      "b6a6"
+    ],
+    "stockfish_move": "c6c8",
+    "stockfish_score": "mate in 1",
+    "match_exact": true,
+    "match_top3": true,
+    "top3_overlap": true
+  },
+  {
+    "name": "King and queen vs king",
+    "category": "Mating Pattern",
+    "fen": "8/8/8/8/8/2k5/8/2KQ4 w - - 0 1",
+    "model_move": "d1b3",
+    "model_score": 0.7556326985359192,
+    "model_top5": [
+      "d1b3",
+      "d1f3",
+      "d1d5"
+    ],
+    "stockfish_move": "d1a4",
+    "stockfish_score": "mate in 6",
+    "match_exact": false,
+    "match_top3": false,
+    "top3_overlap": false
+  }
+]
