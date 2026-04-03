@@ -2,6 +2,8 @@
 
 This folder contains a web app to play against your chess neural network from anywhere.
 
+**Vercel:** in the project settings, set **Root Directory** to **`nextjs_host`** (this folder). The repository root may be `chess2.0`; Vercel must build from `nextjs_host` so `package.json` and `next.config.js` are used correctly.
+
 Architecture:
 
 - Next.js frontend (`app/page.tsx`) with drag-and-drop chessboard

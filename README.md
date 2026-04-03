@@ -82,6 +82,14 @@ UI features:
 
 ---
 
+## Web app (Vercel / Next.js)
+
+The browser UI and API routes live under **`nextjs_host/`**. Full instructions: [`nextjs_host/README.md`](nextjs_host/README.md).
+
+**Vercel:** set the project **Root Directory** to **`nextjs_host`** (not the repo root). Then configure `USE_ONNX` / `MODEL_ONNX_URL` or `MODEL_SERVER_URL` as described in that README.
+
+---
+
 ## How the Model Chooses Moves
 
 This game uses your **neural network**, not Stockfish, for move decisions.
