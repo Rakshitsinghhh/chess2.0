@@ -1,11 +1,10 @@
+# train.py - Complete version with unified endgame training
 import sys
 import os
 import gc
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
 import torch.optim as optim
 from torch.optim.lr_scheduler import OneCycleLR
 from torch.utils.data import DataLoader, Dataset
@@ -19,39 +18,74 @@ import numpy as np
 from datetime import datetime
 import json
 import signal
+import random
 
 from model.chess_model import ChessModel
 from training.loss import ChessLoss
+from training.endgame_trainer import UnifiedTrainer
 
 # ─────────────────────────────────────────
-# Config
+# Config - Default values (will be overridden by config file if exists)
 # ─────────────────────────────────────────
-SHARD_DIR          = "data/shards"
-OUTPUT_DIR         = "outputs/models"
+try:
+    from config.training_config import REGULAR_CONFIG, ENDGAME_CONFIG, COMMON_CONFIG
+    print("✓ Loaded config from config/training_config.py")
+except ImportError:
+    print("⚠️ Config file not found, using defaults...")
+    REGULAR_CONFIG = {
+        "shard_dir": "data/shards",
+        "output_dir": "outputs/models",
+        "batch_size": 64,
+        "accumulation_steps": 4,
+        "epochs_per_shard": 2,
+        "passes": 5,
+        "learning_rate": 1e-3,
+        "value_weight": 0.05,
+        "label_smoothing": 0.1,
+        "grad_clip": 1.0,
+    }
+    ENDGAME_CONFIG = {
+        "enabled": True,
+        "endgame_shard_dir": "data/endgame_shards",
+        "endgame_weight": 2.0,
+        "batch_ratio": 0.3,
+        "epochs": 5,
+        "learning_rate": 1e-4,
+        "accumulation_steps": 4,
+        "value_weight": 0.05,
+        "label_smoothing": 0.1,
+        "num_workers": 0,
+    }
+    COMMON_CONFIG = {
+        "device": "cuda" if torch.cuda.is_available() else "cpu",
+        "input_channels": 20,
+        "num_moves": 4672,
+        "num_workers": 2,
+    }
+
+SHARD_DIR          = REGULAR_CONFIG["shard_dir"]
+OUTPUT_DIR         = REGULAR_CONFIG["output_dir"]
 LOG_DIR            = "outputs/logs"
 PLOT_DIR           = "outputs/plot"
 METRICS_FILE       = f"{OUTPUT_DIR}/training_metrics.json"
 
-BATCH_SIZE         = 64
-ACCUMULATION_STEPS = 4        # effective batch = 256
-EPOCHS_PER_SHARD   = 2         # How many epochs to train on each shard per pass
-LR                 = 1e-3
-VALUE_WEIGHT       = 0.05
-LABEL_SMOOTHING    = 0.1
+BATCH_SIZE         = REGULAR_CONFIG["batch_size"]
+ACCUMULATION_STEPS = REGULAR_CONFIG["accumulation_steps"]
+EPOCHS_PER_SHARD   = REGULAR_CONFIG["epochs_per_shard"]
+LR                 = REGULAR_CONFIG["learning_rate"]
+VALUE_WEIGHT       = REGULAR_CONFIG["value_weight"]
+LABEL_SMOOTHING    = REGULAR_CONFIG["label_smoothing"]
 USE_FOCAL_LOSS     = False
-GRAD_CLIP          = 1.0
-NUM_WORKERS        = 2
+GRAD_CLIP          = REGULAR_CONFIG["grad_clip"]
+NUM_WORKERS        = COMMON_CONFIG.get("num_workers", 2)
 PREFETCH_FACTOR    = 2
-MAX_HISTORY        = 5000      # Increased to store all metrics
+MAX_HISTORY        = 5000
 SAVE_PER_SHARD     = False
 
-# TRAINING CONFIGURATION
-PASSES = 5  # Set number of complete passes through all shards
-# TOTAL_EPOCHS_TARGET will be calculated automatically based on PASSES
-
-DEVICE             = "cuda" if torch.cuda.is_available() else "cpu"
-INPUT_CHANNELS     = 20
-NUM_MOVES          = 4672
+PASSES             = REGULAR_CONFIG["passes"]
+DEVICE             = COMMON_CONFIG["device"]
+INPUT_CHANNELS     = COMMON_CONFIG["input_channels"]
+NUM_MOVES          = COMMON_CONFIG["num_moves"]
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(LOG_DIR,    exist_ok=True)
@@ -66,7 +100,6 @@ def signal_handler(signum, frame):
     print("\n\n⚠️ Received interrupt signal. Saving checkpoint and exiting gracefully...")
     stop_training = True
 
-# Register signal handler
 signal.signal(signal.SIGINT, signal_handler)
 
 # ─────────────────────────────────────────
@@ -106,13 +139,12 @@ class ShardDataset(Dataset):
 
 
 # ─────────────────────────────────────────
-# Loss plot
+# Loss plot functions
 # ─────────────────────────────────────────
 _fig  = None
 _axes = None
 
 def save_loss_plot(shard_ids, metrics_history):
-    """Save training metrics plot"""
     global _fig, _axes
     if _fig is None:
         _fig, _axes = plt.subplots(2, 3, figsize=(15, 10), facecolor="#0f0f0f")
@@ -152,7 +184,6 @@ def save_loss_plot(shard_ids, metrics_history):
 
 
 def save_metrics_json(shard_ids, metrics_history, total_epochs_completed):
-    """Save metrics to JSON for later analysis"""
     data = {
         "shard_ids": shard_ids,
         "metrics": metrics_history,
@@ -164,7 +195,6 @@ def save_metrics_json(shard_ids, metrics_history, total_epochs_completed):
 
 
 def load_metrics_json():
-    """Load previous metrics if they exist"""
     if os.path.exists(METRICS_FILE):
         try:
             with open(METRICS_FILE, 'r') as f:
@@ -176,10 +206,10 @@ def load_metrics_json():
 
 
 # ─────────────────────────────────────────
-# Save checkpoint — guaranteed atomic write
+# Save checkpoint
 # ─────────────────────────────────────────
-def save_checkpoint(path, model, optimizer, scheduler, shard_id, epoch, metrics, total_epochs_completed=None, current_pass=None):
-    """Save checkpoint atomically"""
+def save_checkpoint(path, model, optimizer, scheduler, shard_id, epoch, metrics, 
+                    total_epochs_completed=None, current_pass=None):
     tmp_path = path + ".tmp"
     
     checkpoint_data = {
@@ -190,7 +220,6 @@ def save_checkpoint(path, model, optimizer, scheduler, shard_id, epoch, metrics,
         "metrics":         metrics,
     }
     
-    # Save scheduler state only if it exists and has steps left
     if scheduler is not None:
         try:
             checkpoint_data["scheduler_state"] = scheduler.state_dict()
@@ -210,10 +239,9 @@ def save_checkpoint(path, model, optimizer, scheduler, shard_id, epoch, metrics,
 # ─────────────────────────────────────────
 # Train one shard
 # ─────────────────────────────────────────
-def train_shard(model, optimizer, scheduler, loss_fn, shard_path, shard_id, epoch=0, steps_taken=0):
-    """Train on a single shard for one epoch"""
+def train_shard(model, optimizer, scheduler, loss_fn, shard_path, shard_id, epoch=0):
     dataset = ShardDataset(shard_path, augment=False)
-    loader  = DataLoader(
+    loader = DataLoader(
         dataset,
         batch_size=BATCH_SIZE,
         shuffle=True,
@@ -227,7 +255,6 @@ def train_shard(model, optimizer, scheduler, loss_fn, shard_path, shard_id, epoc
     total_p, total_v, total_t = 0.0, 0.0, 0.0
     total_acc, total_sign, total_mae = 0.0, 0.0, 0.0
     n = 0
-    local_steps = 0
 
     pbar = tqdm(loader, desc=f"Shard {shard_id:03d} Ep{epoch}", unit="batch", leave=False)
     optimizer.zero_grad()
@@ -251,13 +278,10 @@ def train_shard(model, optimizer, scheduler, loss_fn, shard_path, shard_id, epoc
             optimizer.step()
             optimizer.zero_grad()
             
-            # Step scheduler if it exists
             if scheduler is not None:
                 try:
                     scheduler.step()
-                    local_steps += 1
-                except Exception as e:
-                    # If scheduler fails, continue without it
+                except Exception:
                     pass
 
         total_p    += p_loss.item()
@@ -268,7 +292,6 @@ def train_shard(model, optimizer, scheduler, loss_fn, shard_path, shard_id, epoc
         total_mae  += mae.item()
         n          += 1
 
-        # Get current LR safely
         current_lr = 0.0
         if scheduler is not None:
             try:
@@ -321,261 +344,249 @@ def main():
         log.error(f"No shards found in {SHARD_DIR}")
         return
     
-    # Calculate total epochs target based on passes
+    # Calculate total epochs target
     total_shards_count = len(all_shards)
     TOTAL_EPOCHS_TARGET = total_shards_count * EPOCHS_PER_SHARD * PASSES
-    log.info(f"Training configuration: {PASSES} pass(es) through {total_shards_count} shards")
-    log.info(f"Each shard gets {EPOCHS_PER_SHARD} epochs per pass")
-    log.info(f"Total target epochs: {TOTAL_EPOCHS_TARGET}")
     
-    # Initialize variables
+    log.info("="*60)
+    log.info("REGULAR TRAINING PHASE")
+    log.info("="*60)
+    log.info(f"Total shards: {total_shards_count}")
+    log.info(f"Passes: {PASSES} | Epochs per shard: {EPOCHS_PER_SHARD}")
+    log.info(f"Target total epochs: {TOTAL_EPOCHS_TARGET}")
+    log.info("="*60)
+    
+    # Initialize model and optimizer
+    model = ChessModel(input_channels=INPUT_CHANNELS, num_moves=NUM_MOVES).to(DEVICE)
+    optimizer = optim.AdamW(model.parameters(), lr=LR, weight_decay=1e-4)
+    
+    # Check if we already completed regular training
+    regular_completed = False
     start_shard_idx = 0
     start_epoch_in_shard = 0
     total_epochs_completed = 0
     current_pass = 1
-    model = ChessModel(input_channels=INPUT_CHANNELS, num_moves=NUM_MOVES).to(DEVICE)
-    optimizer = optim.AdamW(model.parameters(), lr=LR, weight_decay=1e-4)
     
-    # Load previous metrics if they exist
-    shard_ids, metrics_history = load_metrics_json()
-    
-    # ── Load checkpoint if it exists ──────────────────────────────────────────
     if os.path.exists(checkpoint_path):
         try:
-            log.info(f"Loading checkpoint from {checkpoint_path}")
             ckpt = torch.load(checkpoint_path, map_location=DEVICE, weights_only=False)
             model.load_state_dict(ckpt["model_state"])
             optimizer.load_state_dict(ckpt["optimizer_state"])
             
-            # Get checkpoint info
             last_shard_id = ckpt.get("shard_id", -1)
             last_epoch = ckpt.get("epoch", -1)
             total_epochs_completed = ckpt.get("total_epochs_completed", 0)
             current_pass = ckpt.get("current_pass", 1)
             
-            log.info(f"Checkpoint info: shard={last_shard_id}, epoch={last_epoch}, total_epochs={total_epochs_completed}, pass={current_pass}")
+            log.info(f"Resuming from shard {last_shard_id}, epoch {last_epoch}")
+            log.info(f"Total epochs completed: {total_epochs_completed}")
             
-            # Find where to resume
-            found = False
+            # Check if regular training is complete
+            if total_epochs_completed >= TOTAL_EPOCHS_TARGET:
+                regular_completed = True
+                log.info("Regular training already completed!")
+            
+            # Find resume position
             for idx, shard_path in enumerate(all_shards):
                 shard_num = int(os.path.basename(shard_path).split("_")[1].split(".")[0])
                 if shard_num == last_shard_id:
                     start_shard_idx = idx
                     start_epoch_in_shard = last_epoch + 1
-                    found = True
                     break
             
-            if not found:
-                log.warning(f"Shard {last_shard_id} not found, starting from beginning of current pass")
-                start_shard_idx = 0
-                start_epoch_in_shard = 0
-            
-            # If we completed all epochs for this shard, move to next
             if start_epoch_in_shard >= EPOCHS_PER_SHARD:
                 start_shard_idx += 1
                 start_epoch_in_shard = 0
-                log.info(f"Completed all epochs for shard {last_shard_id}, moving to next shard")
             
             del ckpt
             gc.collect()
             
         except Exception as e:
-            log.warning(f"⚠ Checkpoint load failed: {e} — starting fresh")
-            start_shard_idx = 0
-            start_epoch_in_shard = 0
-            total_epochs_completed = 0
-            current_pass = 1
-            shard_ids = []
-            metrics_history = {}
-    else:
-        log.info("No checkpoint found — starting fresh training")
+            log.warning(f"Checkpoint load failed: {e}")
     
-    # ── Check if we've reached target ─────────────────────────────────────────
-    if total_epochs_completed >= TOTAL_EPOCHS_TARGET:
-        log.info(f"✓ Target of {TOTAL_EPOCHS_TARGET} epochs already completed!")
-        log.info(f"  Total epochs completed: {total_epochs_completed}")
-        log.info(f"  Completed {PASSES} complete pass(es) through all data")
-        return
-    
-    # ── Calculate remaining training and create NEW scheduler ─────────────────
-    remaining_epochs = TOTAL_EPOCHS_TARGET - total_epochs_completed
-    
-    # Calculate total steps needed for remaining training
-    try:
-        sample_shard = ShardDataset(all_shards[0])
-        samples_per_shard = len(sample_shard)
-        steps_per_shard = max(1, samples_per_shard // BATCH_SIZE // ACCUMULATION_STEPS)
-        steps_per_epoch = steps_per_shard * len(all_shards)
-        total_steps_needed = remaining_epochs * steps_per_epoch
-        log.info(f"Calculated steps: {steps_per_shard} steps/shard, {steps_per_epoch} steps/epoch, {total_steps_needed} total steps needed")
-    except Exception as e:
-        log.warning(f"Could not calculate exact steps: {e}, using estimate")
-        total_steps_needed = remaining_epochs * len(all_shards) * 100
-    
-    # ALWAYS create a new scheduler for the remaining training
-    scheduler = OneCycleLR(
-        optimizer,
-        max_lr=LR,
-        total_steps=total_steps_needed,
-        pct_start=0.1,
-        anneal_strategy="cos",
-        div_factor=25.0,
-        final_div_factor=10000.0,
-    )
-    log.info(f"✓ Created NEW scheduler for {remaining_epochs} remaining epochs ({total_steps_needed} steps)")
-    
-    # Initialize metrics history if empty
-    if not metrics_history:
-        metrics_history = {
-            "policy_loss": [], "value_loss": [], "total_loss": [],
-            "move_accuracy": [], "value_sign_accuracy": [], "value_mae": []
-        }
-    
-    # ── Log training info ─────────────────────────────────────────────────────
-    log.info("="*60)
-    log.info(f"Model params: {sum(p.numel() for p in model.parameters()):,}")
-    log.info(f"Total shards: {len(all_shards)}")
-    log.info(f"Passes: {PASSES}  |  Current pass: {current_pass}")
-    log.info(f"Target total epochs: {TOTAL_EPOCHS_TARGET}")
-    log.info(f"Epochs completed: {total_epochs_completed}")
-    log.info(f"Remaining epochs: {remaining_epochs}")
-    log.info(f"EPOCHS_PER_SHARD: {EPOCHS_PER_SHARD}")
-    log.info(f"Device: {DEVICE}  |  Batch: {BATCH_SIZE} (eff. {BATCH_SIZE * ACCUMULATION_STEPS})")
-    log.info(f"Resuming from shard {start_shard_idx} (shard {start_shard_idx+1}/{len(all_shards)}), epoch {start_epoch_in_shard}")
-    log.info("="*60)
-    log.info("⚠️ Press Ctrl+C to save checkpoint and exit gracefully")
-    log.info("="*60)
-    
-    # ── Loss function ─────────────────────────────────────────────────────────
-    loss_fn = ChessLoss(
-        value_weight=VALUE_WEIGHT,
-        label_smoothing=LABEL_SMOOTHING,
-        use_focal_loss=USE_FOCAL_LOSS,
-    )
-    
-    # Create overall progress bar
-    overall_pbar = tqdm(total=TOTAL_EPOCHS_TARGET, desc=f"Overall Progress (Pass {current_pass}/{PASSES})", position=0, leave=True)
-    overall_pbar.update(total_epochs_completed)  # Show already completed epochs
-    
-    # ── Training loop with multi-pass support ─────────────────────────────────
-    epochs_trained_this_run = 0
-    current_shard_idx = start_shard_idx
-    current_epoch_in_shard = start_epoch_in_shard
-    
-    # Main training loop - continues until target reached or stop flag
-    while total_epochs_completed < TOTAL_EPOCHS_TARGET and not stop_training:
-        # Loop through shards
-        for shard_idx in range(current_shard_idx, len(all_shards)):
-            if stop_training:
-                break
-                
-            shard_path = all_shards[shard_idx]
-            shard_id = int(os.path.basename(shard_path).split("_")[1].split(".")[0])
-            
-            # Determine starting epoch for this shard
-            start_epoch = current_epoch_in_shard if shard_idx == current_shard_idx else 0
-            
-            # Train epochs for this shard
-            for epoch in range(start_epoch, EPOCHS_PER_SHARD):
-                if stop_training or total_epochs_completed >= TOTAL_EPOCHS_TARGET:
-                    break
-                
-                # Train on this shard
-                metrics = train_shard(
-                    model, optimizer, scheduler, loss_fn,
-                    shard_path, shard_id, epoch
-                )
-                
-                total_epochs_completed += 1
-                epochs_trained_this_run += 1
-                
-                # Update overall progress bar
-                overall_pbar.update(1)
-                overall_pbar.set_postfix(
-                    acc=f"{metrics['move_accuracy']:.3f}",
-                    loss=f"{metrics['total_loss']:.3f}",
-                    shard=f"{shard_id}",
-                    pass_num=f"{current_pass}"
-                )
-                
-                # Store metrics
-                shard_ids.append(shard_id)
-                for key in metrics_history:
-                    metrics_history[key].append(metrics.get(key, 0.0))
-                
-                # Trim history if needed
-                if len(shard_ids) > MAX_HISTORY:
-                    shard_ids = shard_ids[-MAX_HISTORY:]
-                    for k in metrics_history:
-                        metrics_history[k] = metrics_history[k][-MAX_HISTORY:]
-                
-                # Save checkpoint after every epoch
-                save_checkpoint(
-                    checkpoint_path,
-                    model, optimizer, scheduler,
-                    shard_id, epoch, metrics,
-                    total_epochs_completed,
-                    current_pass
-                )
-                
-                # Save metrics JSON
-                save_metrics_json(shard_ids, metrics_history, total_epochs_completed)
-                
-                # Save plot periodically (every 10 epochs to save time)
-                if total_epochs_completed % 10 == 0:
-                    save_loss_plot(shard_ids, metrics_history)
-                
-                # Calculate remaining for logging
-                remaining = TOTAL_EPOCHS_TARGET - total_epochs_completed
-                log.info(f"✓ Checkpoint saved | Progress: {total_epochs_completed}/{TOTAL_EPOCHS_TARGET} epochs | Remaining: {remaining} | Pass: {current_pass}/{PASSES} | Acc: {metrics['move_accuracy']:.3f}")
-            
-            # Reset for next shard
-            current_epoch_in_shard = 0
-            
-            # Check if we reached target
-            if total_epochs_completed >= TOTAL_EPOCHS_TARGET or stop_training:
-                break
+    # ── Regular Training Phase ────────────────────────────────────────────────
+    if not regular_completed and total_epochs_completed < TOTAL_EPOCHS_TARGET:
+        # Calculate steps for scheduler
+        try:
+            sample_shard = ShardDataset(all_shards[0])
+            samples_per_shard = len(sample_shard)
+            steps_per_shard = max(1, samples_per_shard // BATCH_SIZE // ACCUMULATION_STEPS)
+            steps_per_epoch = steps_per_shard * len(all_shards)
+            remaining_epochs = TOTAL_EPOCHS_TARGET - total_epochs_completed
+            total_steps_needed = remaining_epochs * steps_per_epoch
+        except:
+            total_steps_needed = remaining_epochs * len(all_shards) * 100
         
-        # After completing all shards, check if we need another pass
-        if total_epochs_completed < TOTAL_EPOCHS_TARGET and not stop_training:
-            current_pass += 1
-            current_shard_idx = 0
-            current_epoch_in_shard = 0
-            overall_pbar.set_description(f"Overall Progress (Pass {current_pass}/{PASSES})")
-            log.info(f"🎉 Completed pass {current_pass-1}/{PASSES}! Starting pass {current_pass}/{PASSES}")
-            log.info(f"   Progress: {total_epochs_completed}/{TOTAL_EPOCHS_TARGET} epochs completed")
-        else:
-            break
-    
-    # Close progress bar
-    overall_pbar.close()
-    
-    # Save final checkpoint if stopped by user
-    if stop_training:
-        log.info("⚠️ Training stopped by user. Final checkpoint saved.")
-        # Save one more checkpoint with current state
-        save_checkpoint(
-            checkpoint_path,
-            model, optimizer, scheduler,
-            shard_id, epoch, metrics,
-            total_epochs_completed,
-            current_pass
+        scheduler = OneCycleLR(
+            optimizer,
+            max_lr=LR,
+            total_steps=total_steps_needed,
+            pct_start=0.1,
+            anneal_strategy="cos",
+            div_factor=25.0,
+            final_div_factor=10000.0,
         )
+        
+        loss_fn = ChessLoss(
+            value_weight=VALUE_WEIGHT,
+            label_smoothing=LABEL_SMOOTHING,
+            use_focal_loss=USE_FOCAL_LOSS,
+        )
+        
+        shard_ids, metrics_history = load_metrics_json()
+        if not metrics_history:
+            metrics_history = {
+                "policy_loss": [], "value_loss": [], "total_loss": [],
+                "move_accuracy": [], "value_sign_accuracy": [], "value_mae": []
+            }
+        
+        overall_pbar = tqdm(total=TOTAL_EPOCHS_TARGET, desc="Regular Training", position=0, leave=True)
+        overall_pbar.update(total_epochs_completed)
+        
+        # Training loop
+        current_shard_idx = start_shard_idx
+        current_epoch_in_shard = start_epoch_in_shard
+        
+        while total_epochs_completed < TOTAL_EPOCHS_TARGET and not stop_training:
+            for shard_idx in range(current_shard_idx, len(all_shards)):
+                if stop_training:
+                    break
+                    
+                shard_path = all_shards[shard_idx]
+                shard_id = int(os.path.basename(shard_path).split("_")[1].split(".")[0])
+                
+                start_epoch = current_epoch_in_shard if shard_idx == current_shard_idx else 0
+                
+                for epoch in range(start_epoch, EPOCHS_PER_SHARD):
+                    if stop_training or total_epochs_completed >= TOTAL_EPOCHS_TARGET:
+                        break
+                    
+                    metrics = train_shard(
+                        model, optimizer, scheduler, loss_fn,
+                        shard_path, shard_id, epoch
+                    )
+                    
+                    total_epochs_completed += 1
+                    overall_pbar.update(1)
+                    overall_pbar.set_postfix(acc=f"{metrics['move_accuracy']:.3f}")
+                    
+                    shard_ids.append(shard_id)
+                    for key in metrics_history:
+                        metrics_history[key].append(metrics.get(key, 0.0))
+                    
+                    if len(shard_ids) > MAX_HISTORY:
+                        shard_ids = shard_ids[-MAX_HISTORY:]
+                        for k in metrics_history:
+                            metrics_history[k] = metrics_history[k][-MAX_HISTORY:]
+                    
+                    save_checkpoint(
+                        checkpoint_path, model, optimizer, scheduler,
+                        shard_id, epoch, metrics, total_epochs_completed, current_pass
+                    )
+                    save_metrics_json(shard_ids, metrics_history, total_epochs_completed)
+                    
+                    if total_epochs_completed % 10 == 0:
+                        save_loss_plot(shard_ids, metrics_history)
+                
+                current_epoch_in_shard = 0
+            
+            if total_epochs_completed < TOTAL_EPOCHS_TARGET and not stop_training:
+                current_pass += 1
+                current_shard_idx = 0
+                overall_pbar.set_description(f"Regular Training (Pass {current_pass}/{PASSES})")
+                log.info(f"Starting pass {current_pass}/{PASSES}")
+        
+        overall_pbar.close()
+        save_loss_plot(shard_ids, metrics_history)
+        
+        log.info("="*60)
+        log.info(f"Regular training complete! {total_epochs_completed}/{TOTAL_EPOCHS_TARGET} epochs")
+        log.info("="*60)
+        
+        # Save regular training final checkpoint
+        regular_final_path = f"{OUTPUT_DIR}/regular_trained_final.pt"
+        torch.save({
+            "model_state": model.state_dict(),
+            "regular_epochs": total_epochs_completed,
+            "regular_metrics": metrics_history,
+            "timestamp": datetime.now().isoformat()
+        }, regular_final_path)
+        log.info(f"Regular training final model saved to {regular_final_path}")
     
-    # ── Final summary ─────────────────────────────────────────────────────────
+    # ── UNIFIED ENDGAME TRAINING PHASE (Continues on same model) ──────────────
+       # ── UNIFIED TRAINING (Combine Regular + Endgame) ─────────────────────────
+    if ENDGAME_CONFIG["enabled"] and not stop_training:
+        log.info("\n" + "="*60)
+        log.info("UNIFIED TRAINING - COMBINING REGULAR + ENDGAME DATA")
+        log.info("="*60)
+    
+        # Check if endgame shards exist
+        endgame_shards = glob.glob(f"{ENDGAME_CONFIG['endgame_shard_dir']}/endgame_shard_*.pt")
+        if not endgame_shards:
+            log.warning("No endgame shards found! Skipping unified training.")
+            log.info("Run: python preprocessing/generate_endgame.py to generate endgame dataset")
+        else:
+            # Get all regular shard paths
+            regular_shard_paths = all_shards
+            
+            log.info(f"Regular shards: {len(regular_shard_paths)}")
+            log.info(f"Endgame shards: {len(endgame_shards)}")
+            log.info(f"Training will combine both datasets into one unified model")
+            
+            # Import UnifiedTrainer
+            from training.endgame_trainer import UnifiedTrainer
+            
+            # Initialize unified trainer
+            unified_trainer = UnifiedTrainer(model, ENDGAME_CONFIG, checkpoint_path=checkpoint_path)
+            
+            # Check if we already started
+            start_epoch = 0
+            if os.path.exists(checkpoint_path):
+                try:
+                    ckpt = torch.load(checkpoint_path, map_location=DEVICE)
+                    if "unified_epoch" in ckpt:
+                        start_epoch = ckpt.get("unified_epoch", -1) + 1
+                        log.info(f"Resuming unified training from epoch {start_epoch}")
+                except:
+                    pass
+            
+            # Run unified training
+            unified_metrics = unified_trainer.run_unified_training(
+                regular_shard_paths, 
+                start_epoch=start_epoch
+            )
+            
+            if unified_metrics:
+                log.info("\n" + "="*60)
+                log.info("UNIFIED TRAINING SUMMARY")
+                log.info("="*60)
+                for i, metrics in enumerate(unified_metrics):
+                    log.info(f"Epoch {i}: Acc={metrics['move_accuracy']:.3f}, Loss={metrics['total_loss']:.3f}")
+                log.info("="*60)
+                log.info(f"✓ UNIFIED MODEL SAVED to {checkpoint_path}")
+                log.info("  This model now knows regular positions AND endgames!")
+    
+    # ── Final Summary ─────────────────────────────────────────────────────────
+    log.info("\n" + "="*60)
+    log.info("TRAINING PIPELINE COMPLETE!")
     log.info("="*60)
-    if total_epochs_completed >= TOTAL_EPOCHS_TARGET:
-        log.info(f"✓ Training complete! Reached target: {total_epochs_completed}/{TOTAL_EPOCHS_TARGET} epochs")
-        log.info(f"✓ Completed {PASSES} complete pass(es) through all {total_shards_count} shards")
+    log.info(f"Regular training epochs: {total_epochs_completed}")
+    
+    # Safely check endgame metrics
+    if ENDGAME_CONFIG["enabled"]:
+        if 'unified_metrics' in locals() and unified_metrics:
+            log.info(f"Endgame training: Completed ({len(unified_metrics)} unified epochs)")
+        else:
+            log.info(f"Endgame training: Skipped/No data")
     else:
-        log.info(f"⚠ Training stopped: {total_epochs_completed}/{TOTAL_EPOCHS_TARGET} epochs")
-        log.info(f"   Completed {current_pass-1} full passes, started pass {current_pass}")
-    log.info(f"Epochs trained in this run: {epochs_trained_this_run}")
-    if metrics_history and metrics_history.get("move_accuracy"):
-        log.info(f"Final move accuracy: {metrics_history['move_accuracy'][-1]:.4f}")
-        log.info(f"Final policy loss: {metrics_history['policy_loss'][-1]:.4f}")
-        log.info(f"Final value loss: {metrics_history['value_loss'][-1]:.4f}")
-    log.info(f"Checkpoint saved at: {checkpoint_path}")
+        log.info(f"Endgame training: Disabled")
+    
+    log.info(f"Final model saved to: {checkpoint_path}")
+    
+    # Verify the final model exists
+    if os.path.exists(checkpoint_path):
+        file_size = os.path.getsize(checkpoint_path) / (1024 * 1024)
+        log.info(f"✓ Model file size: {file_size:.2f} MB")
     log.info("="*60)
 
 

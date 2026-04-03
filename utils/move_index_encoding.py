@@ -114,6 +114,7 @@ def policy_index_to_move(index: int) -> chess.Move:
     piece = PROMOTION_PIECES[promo % 4]
 
     dx = direction - 1
-    tx, ty = fx + dx, fy + 1  # assumes white (fine for encoding)
+    ty = fy + 1 if fy == 6 else fy - 1
+    tx = fx + dx
 
     return chess.Move(from_sq, coords_to_square(tx, ty), promotion=piece)

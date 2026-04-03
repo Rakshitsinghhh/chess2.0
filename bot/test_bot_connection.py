@@ -27,54 +27,152 @@ def predict(fen, model):
     board = chess.Board(fen)
     if board.is_checkmate():
         return None, (1.0 if board.turn == chess.BLACK else -1.0), []
-    if board.is_stalemate() or board.is_insufficient_material():
+    if board.is_stalemate():
         return None, 0.0, []
 
-    board_tensor = torch.tensor(
-        fen_to_tensor(fen), dtype=torch.float32
-    ).unsqueeze(0).to(DEVICE)
-    mask = torch.tensor(
-        generate_move_mask(fen), dtype=torch.float32
-    ).to(DEVICE)
+    board_tensor = torch.tensor(fen_to_tensor(fen), dtype=torch.float32).unsqueeze(0).to(DEVICE)
+    mask = torch.tensor(generate_move_mask(fen), dtype=torch.float32).to(DEVICE)
 
+    # If nothing is representable in the move encoding, fall back to a legal move.
     if mask.sum().item() == 0:
         return list(board.legal_moves)[0].uci(), 0.0, []
 
     with torch.no_grad():
         policy_logits, value = model(board_tensor)
 
-    policy_logits = policy_logits.squeeze(0) + (mask - 1) * 1e9
-    best_idx      = torch.argmax(policy_logits).item()
-    move_uci      = policy_index_to_move(best_idx).uci()
-
+    # Mask illegal moves by setting their logits to a huge negative value.
+    masked_logits = policy_logits.squeeze(0) + (mask - 1) * 1e9
     legal_ucis = [m.uci() for m in board.legal_moves]
-    if move_uci not in legal_ucis:
-        logits_np  = policy_logits.cpu().numpy()
-        best_score = -float('inf')
-        move_uci   = legal_ucis[0]
-        for lm in board.legal_moves:
-            idx = move_to_policy_index(lm)
-            if idx is not None and logits_np[idx] > best_score:
-                best_score = logits_np[idx]
-                move_uci   = lm.uci()
 
-    # top-5 legal moves
-    top5_indices = torch.topk(
-        policy_logits, min(10, policy_logits.shape[0])
-    ).indices.tolist()
-    top5 = []
-    for idx in top5_indices:
+    # Collect a candidate set from the model's policy head.
+    # Defaults are tuned via lightweight evaluation (no retraining).
+    value_policy_weight = float(os.environ.get("VALUE_POLICY_WEIGHT", "2.0"))
+    candidate_limit = int(os.environ.get("CANDIDATE_LIMIT", "5"))
+
+    topk_indices = torch.topk(masked_logits, min(10, masked_logits.shape[0])).indices.tolist()
+    candidate_pairs = []  # (policy_index, uci)
+    for idx in topk_indices:
         try:
-            m = policy_index_to_move(idx).uci()
-            if m in legal_ucis and m not in top5:
-                top5.append(m)
-            if len(top5) >= 5:
-                break
-        except:
-            pass
+            uci = policy_index_to_move(idx).uci()
+        except Exception:
+            continue
+        if uci in legal_ucis and all(uci != u for _, u in candidate_pairs):
+            candidate_pairs.append((idx, uci))
+        if len(candidate_pairs) >= candidate_limit:
+            break
 
-    score = float(torch.clamp(value, -1.0, 1.0).item())
-    return move_uci, score, top5
+    if not candidate_pairs:
+        # Should be rare: fallback to first legal move.
+        first = legal_ucis[0]
+        score = float(torch.clamp(value, -1.0, 1.0).item())
+        return first, score, []
+
+    # Precompute log-probs for a stable policy component.
+    log_probs = torch.nn.functional.log_softmax(masked_logits, dim=-1)
+
+    # 1-ply value reranking (no retraining):
+    # Evaluate each candidate after making the move, and choose the best value
+    # for the side-to-move at the root (model value is from White's perspective).
+    try:
+        want_max = (board.turn == chess.WHITE)
+        reranked = []
+        two_ply = os.environ.get("TWO_PLY", "0") == "1"
+        opp_response_limit = int(os.environ.get("OPP_RESPONSE_LIMIT", "3"))
+        for idx, uci in candidate_pairs:
+            b2 = board.copy()
+            b2.push(chess.Move.from_uci(uci))
+
+            # Terminal overrides for accuracy:
+            # - Prefer moves that deliver checkmate immediately.
+            # - Prefer moves that do NOT stalemate the opponent.
+            # In python-chess, these are evaluated from the side-to-move perspective,
+            # so after pushing, "is_checkmate" means the opponent is checkmated.
+            gives_mate = b2.is_checkmate()
+            causes_stalemate = b2.is_stalemate()
+
+            b2_tensor = torch.tensor(fen_to_tensor(b2.fen()), dtype=torch.float32).unsqueeze(0).to(DEVICE)
+            if not two_ply:
+                # 1-ply: evaluate after our move.
+                with torch.no_grad():
+                    _, v2 = model(b2_tensor)
+                v2 = float(torch.clamp(v2, -1.0, 1.0).item())
+                score_for_root = v2 if want_max else -v2
+            else:
+                # 2-ply: minimize over opponent's best replies (by model policy).
+                # Value head is from White perspective; we map it to root perspective using want_max.
+                masked_resp_logits = None
+                legal_resp_ucis = []
+                response_moves = []
+
+                # Generate opponent legal move mask for b2.
+                # (We only use it to filter top policy replies.)
+                resp_mask_np = generate_move_mask(b2.fen())
+                resp_mask = torch.tensor(resp_mask_np, dtype=torch.float32).to(DEVICE)
+                legal_resp_ucis = [m.uci() for m in b2.legal_moves]
+
+                with torch.no_grad():
+                    resp_policy_logits, _ = model(b2_tensor)
+                resp_policy_logits = resp_policy_logits.squeeze(0) + (resp_mask - 1) * 1e9
+
+                # Select opponent replies from masked policy.
+                resp_top_indices = torch.topk(resp_policy_logits, min(opp_response_limit * 2, resp_policy_logits.shape[0])).indices.tolist()
+                for r_idx in resp_top_indices:
+                    try:
+                        r_uci = policy_index_to_move(r_idx).uci()
+                    except Exception:
+                        continue
+                    if r_uci in legal_resp_ucis and all(r_uci != r for r in response_moves):
+                        response_moves.append(r_uci)
+                    if len(response_moves) >= opp_response_limit:
+                        break
+
+                if not response_moves:
+                    # Fallback: use first legal reply.
+                    response_moves = [legal_resp_ucis[0]] if legal_resp_ucis else []
+
+                # Evaluate after opponent reply: opponent minimizes root score.
+                best_min_value_for_root = float("inf")
+                for r_uci in response_moves:
+                    b3 = b2.copy()
+                    b3.push(chess.Move.from_uci(r_uci))
+                    b3_tensor = torch.tensor(fen_to_tensor(b3.fen()), dtype=torch.float32).unsqueeze(0).to(DEVICE)
+                    with torch.no_grad():
+                        _, v3 = model(b3_tensor)
+                    v3 = float(torch.clamp(v3, -1.0, 1.0).item())
+                    value_for_root = v3 if want_max else -v3
+                    if value_for_root < best_min_value_for_root:
+                        best_min_value_for_root = value_for_root
+
+                score_for_root = best_min_value_for_root
+
+            policy_component = float(log_probs[idx].item())
+            combined_score = policy_component + value_policy_weight * score_for_root
+
+            # Sort key: mate first, then avoid stalemate, then maximize combined score.
+            sort_key = (
+                1 if gives_mate else 0,
+                1 if not causes_stalemate else 0,
+                combined_score,
+            )
+
+            reranked.append((sort_key, uci, v2))
+
+        reranked.sort(key=lambda t: t[0], reverse=True)
+        move_uci = reranked[0][1]
+        score = float(reranked[0][2])
+        candidates = [u for _, u, _ in reranked]
+    except Exception:
+        # If reranking fails for any reason, fall back to policy argmax.
+        best_idx = torch.argmax(masked_logits).item()
+        move_uci = policy_index_to_move(best_idx).uci()
+        if move_uci not in legal_ucis:
+            move_uci = candidate_pairs[0][1]
+        score = float(torch.clamp(value, -1.0, 1.0).item())
+
+    # Return top-5 candidates (JSON keeps only top-3).
+    if 'candidates' not in locals():
+        candidates = [u for _, u in candidate_pairs[:5]]
+    return move_uci, score, candidates
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -203,7 +301,7 @@ def get_stockfish_eval_local(fen, depth=15):
             analysis = engine.analyse(
                 board, 
                 chess.engine.Limit(depth=depth),
-                multipv=3
+                multipv=5
             )
             
             results = []
@@ -213,7 +311,7 @@ def get_stockfish_eval_local(fen, depth=15):
                 
                 if score.relative.is_mate():
                     cp = None
-                    mate = score.relative.mate()
+                    mate = score.relative.mate()  # positive => side-to-move mates, negative => side-to-move gets mated
                 else:
                     cp = score.relative.score()
                     mate = None
@@ -224,6 +322,22 @@ def get_stockfish_eval_local(fen, depth=15):
                     'mate': mate,
                     'pv': [m.uci() for m in line['pv'][:5]]
                 })
+
+            # Ensure deterministic "best" selection: sort by (win mate first, then
+            # best cp for side-to-move). We previously relied on iteration order.
+            def sort_key(r):
+                mate = r.get("mate")
+                cp = r.get("cp")
+                if mate is not None:
+                    # win mates first; among them smaller mate distance is better.
+                    if mate > 0:
+                        return (0, mate)
+                    # losing mates: more negative (mate further away) is better.
+                    return (1, mate)
+                # non-mate: higher cp is better for side-to-move.
+                return (2, -cp if cp is not None else 0.0)
+
+            results = sorted(results, key=sort_key)
             return results
     except Exception as e:
         return None
@@ -258,7 +372,10 @@ def compare_with_stockfish(model, test_positions):
             sf_move = sf_best['move']
             
             if sf_best['mate']:
-                sf_score_str = f"mate in {sf_best['mate']}"
+                if sf_best['mate'] > 0:
+                    sf_score_str = f"mate in {sf_best['mate']}"
+                else:
+                    sf_score_str = f"mated in {abs(sf_best['mate'])}"
             else:
                 sf_score_str = f"{sf_best['cp']}cp"
             
@@ -366,7 +483,9 @@ def print_comparison_report(results):
     # Save results
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     os.makedirs("outputs/comparisons", exist_ok=True)
-    output_file = f"outputs/comparisons/comparison_{timestamp}.json"
+    w_tag = os.environ.get("VALUE_POLICY_WEIGHT", "2.0").replace(".", "_")
+    c_tag = os.environ.get("CANDIDATE_LIMIT", "5")
+    output_file = f"outputs/comparisons/comparison_{timestamp}_w{w_tag}_c{c_tag}.json"
     
     with open(output_file, "w") as f:
         json.dump(results, f, indent=2, default=str)

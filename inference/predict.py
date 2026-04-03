@@ -278,9 +278,9 @@ TEST_SUITE = [
     {
         "category": "Endgame",
         "name":     "Opposition — king takes opposition",
-        "fen":      "8/8/8/3k4/8/3K4/8/8 w - - 0 1",
+        "fen":      "8/8/8/3k4/8/8/3K4/8 w - - 0 1",
         "mode":     "any",
-        "best":     ["d3d4", "d3e4", "d3c4"],
+        "best":     ["d2d3"],
         "score_min": -0.3, "score_max": 0.3,
     },
     {
