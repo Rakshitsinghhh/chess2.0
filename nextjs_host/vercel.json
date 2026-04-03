@@ -1,0 +1,10 @@
+{
+  "functions": {
+    "app/api/nn-move/route.ts": {
+      "maxDuration": 60
+    },
+    "app/api/nn-eval/route.ts": {
+      "maxDuration": 60
+    }
+  }
+}

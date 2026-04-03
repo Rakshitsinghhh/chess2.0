@@ -1,9 +1,8 @@
 import { Chess } from "chess.js";
-import { Tensor } from "onnxruntime-node";
 
 import { fenToInputTensorData } from "../chess/fenTensor";
 import { moveToPolicyIndex, TOTAL_MOVES } from "../chess/movePolicy";
-import { getOnnxSession } from "./session";
+import { getOnnxSession, getOrtModule } from "./session";
 
 export type OnnxPredictResult = {
   move_uci: string | null;
@@ -63,9 +62,10 @@ export async function onnxFastPredict(fen: string): Promise<OnnxPredictResult> {
     throw new Error("No legal moves could be encoded (policy index mismatch)");
   }
 
+  const ort = await getOrtModule();
   const session = await getOnnxSession();
   const inputData = fenToInputTensorData(fen);
-  const input = new Tensor("float32", inputData, [1, 20, 8, 8]);
+  const input = new ort.Tensor("float32", inputData, [1, 20, 8, 8]);
   const feeds = { board: input };
   const out = await session.run(feeds);
 

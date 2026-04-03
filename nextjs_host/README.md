@@ -41,7 +41,7 @@ npm install
 npm run dev
 ```
 
-**Vercel:** set `USE_ONNX=1`, commit or upload `public/model.onnx` (or use `MODEL_ONNX_URL`). The function bundles `onnxruntime-node` (native binaries); very large ONNX files or cold starts may hit platform limits—watch deployment size and timeout settings.
+**Vercel:** set `USE_ONNX=1` and commit `public/model.onnx` (or set `MODEL_ONNX_URL` to any HTTPS URL). Inference uses **`onnxruntime-web` (WASM)** so the bundle stays under the 250 MB serverless limit; `model.onnx` is **excluded from the function trace** and loaded at runtime from `https://$VERCEL_URL/model.onnx` (static `public/`) or from `MODEL_ONNX_URL`. Cold starts may need a higher **Function max duration** (e.g. 30–60s) on paid plans if WASM init is slow.
 
 ---
 
