@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-
 import { shouldUseOnnx } from "@/lib/inferenceMode";
-import { onnxFastPredict } from "@/lib/onnx/fastPredict";
+import { onnxEvalValue } from "@/lib/onnx/fastPredict";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -16,20 +15,18 @@ export async function POST(req: NextRequest) {
 
     if (shouldUseOnnx()) {
       try {
-        const data = await onnxFastPredict(fen);
+        const data = await onnxEvalValue(fen);
         return NextResponse.json(data);
       } catch (err) {
         return NextResponse.json(
-          { error: "ONNX inference failed", details: String(err) },
+          { error: "ONNX eval failed", details: String(err) },
           { status: 500 }
         );
       }
     }
 
-    const backendUrl = process.env.MODEL_SERVER_URL || "http://127.0.0.1:8001";
-    const controller = new AbortController();
-    const timeoutMs = 12000;
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const backendUrl = process.env.MODEL_SERVER_URL || "https://chess2-0-2.onrender.com";
+
     let res: Response;
     try {
       res = await fetch(`${backendUrl}/predict`, {
@@ -37,23 +34,26 @@ export async function POST(req: NextRequest) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ fen }),
         cache: "no-store",
-        signal: controller.signal
+        // no timeout — wait as long as the model needs
       });
-    } finally {
-      clearTimeout(timer);
+    } catch (err) {
+      return NextResponse.json(
+        { error: "Failed to reach model server", details: String(err) },
+        { status: 503 }
+      );
     }
 
     const data = await res.json();
     if (!res.ok) {
       return NextResponse.json(
-        { error: data?.error || "Model server error", details: data },
+        { error: data?.detail || data?.error || "Model server error", details: data },
         { status: 502 }
       );
     }
     return NextResponse.json(data);
   } catch (err) {
     return NextResponse.json(
-      { error: "Failed to fetch move from model server", details: String(err) },
+      { error: "Failed to get move", details: String(err) },
       { status: 500 }
     );
   }

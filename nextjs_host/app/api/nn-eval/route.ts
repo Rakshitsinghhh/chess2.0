@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-
 import { shouldUseOnnx } from "@/lib/inferenceMode";
 import { onnxEvalValue } from "@/lib/onnx/fastPredict";
 
@@ -27,9 +26,7 @@ export async function POST(req: NextRequest) {
     }
 
     const backendUrl = process.env.MODEL_SERVER_URL || "http://127.0.0.1:8001";
-    const controller = new AbortController();
-    const timeoutMs = 8000;
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
     let res: Response;
     try {
       res = await fetch(`${backendUrl}/eval`, {
@@ -37,10 +34,13 @@ export async function POST(req: NextRequest) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ fen }),
         cache: "no-store",
-        signal: controller.signal
+        // no AbortController, no timeout — wait as long as it takes
       });
-    } finally {
-      clearTimeout(timer);
+    } catch (err) {
+      return NextResponse.json(
+        { error: "Failed to reach model server", details: String(err) },
+        { status: 503 }
+      );
     }
 
     const data = await res.json();

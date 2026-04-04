@@ -1,14 +1,22 @@
-#!/usr/bin/env bash
-# ─── Chess2.0 FastAPI server ──────────────────────────────────────────────────
-set -euo pipefail
+#!/bin/sh
 
-HOST="${HOST:-0.0.0.0}"
-PORT="${PORT:-8001}"
-WORKERS="${WORKERS:-1}"
+echo "🚀 Starting Chess2.0 server..."
 
-echo "Starting Chess2.0 model server on ${HOST}:${PORT} …"
-exec uvicorn server:app \
-  --host "$HOST" \
-  --port "$PORT" \
-  --workers "$WORKERS" \
-  --log-level info
+echo "📍 MODEL_PATH: $MODEL_PATH"
+
+if [ ! -f "$MODEL_PATH" ]; then
+  echo "❌ Model not found"
+
+  if [ -n "$MODEL_URL" ]; then
+    echo "📥 Downloading model..."
+    mkdir -p $(dirname "$MODEL_PATH")
+    wget -O "$MODEL_PATH" "$MODEL_URL"
+  else
+    echo "❌ MODEL_URL not set"
+    exit 1
+  fi
+fi
+
+echo "✅ Model ready"
+
+uvicorn server:app --host 0.0.0.0 --port $PORT
