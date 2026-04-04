@@ -1,36 +1,78 @@
-# Ignore virtual environment
-.venv/
+# =========================
+# 🐍 Python
+# =========================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
 
-# Ignore data folder (all files)
+# Virtual environments
+.venv/
+venv/
+env/
+
+# =========================
+# 📦 Data & Outputs
+# =========================
+
+# Ignore all data files
 data/*
 !data/.gitkeep
 
-# Ignore PyTorch model files everywhere
-*.pt
+# Ignore outputs generally
+outputs/*
+!outputs/.gitkeep
 
-# Exported ONNX (large); generate with scripts/export_model_onnx.py
-*.onnx
-
-# Ignore large model shards inside outputs/models
-outputs/models/*
-
-# (Optional) keep folder structure
+# Allow models folder structure
+!outputs/models/
 !outputs/models/.gitkeep
 
-# Ignore logs if needed
+# Allow ONLY .pt models inside models folder
+!outputs/models/*.pt
+
+# Ignore logs
 outputs/logs/*
 !outputs/logs/.gitkeep
 
-# Ignore Python cache
-__pycache__/
-*.pyc
+# =========================
+# 🤖 ML Models (global rule)
+# =========================
 
-# Node / Next.js
+# Track .pt using Git LFS (not normal git)
+# (LFS will handle these)
+*.pt
+
+# Ignore ONNX (large exports)
+*.onnx
+
+# =========================
+# 🌐 Node / Frontend
+# =========================
 node_modules/
 .next/
 out/
 *.tsbuildinfo
+
+# =========================
+# 🔐 Environment files
+# =========================
 .env
 .env.local
-.env*.local
-.vercel
+.env.*.local
+
+# =========================
+# 🧠 IDE / Editor
+# =========================
+.vscode/
+.idea/
+
+# =========================
+# 🧾 Misc
+# =========================
+.DS_Store
+*.log
